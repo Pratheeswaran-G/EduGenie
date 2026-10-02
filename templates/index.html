@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EduGenie - Your personal AI tutor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="masthead">
+      <h1>EduGenie</h1>
+      <p>Your personal AI tutor for learning support.</p>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="Learning tools">
+      <button class="tab active" role="tab" aria-selected="true" data-target="qa">Ask a question</button>
+      <button class="tab" role="tab" aria-selected="false" data-target="explain">Explain a topic</button>
+      <button class="tab" role="tab" aria-selected="false" data-target="summary">Summarize</button>
+      <button class="tab" role="tab" aria-selected="false" data-target="quiz">Take a quiz</button>
+      <button class="tab" role="tab" aria-selected="false" data-target="path">Learning path</button>
+    </nav>
+
+    <!-- Q&A -->
+    <section class="panel active" id="qa" role="tabpanel">
+      <form id="qaForm">
+        <label for="question">Ask EduGenie a question</label>
+        <div class="row">
+          <input type="text" id="question" placeholder="Which is the largest ocean?" required>
+          <button type="submit">Get answer</button>
+        </div>
+      </form>
+      <div id="qaResult" class="output" hidden></div>
+    </section>
+
+    <!-- Explanation -->
+    <section class="panel" id="explain" role="tabpanel">
+      <form id="explainForm">
+        <label for="topic">Which concept should be explained?</label>
+        <div class="row">
+          <input type="text" id="topic" placeholder="Photosynthesis" required>
+          <button type="submit">Explain</button>
+        </div>
+        <p class="hint">Uses the local LaMini-Flan-T5 model. The first request can take a minute while the model loads.</p>
+      </form>
+      <div id="explainResult" class="output" hidden></div>
+    </section>
+
+    <!-- Summary -->
+    <section class="panel" id="summary" role="tabpanel">
+      <form id="summaryForm">
+        <label for="summaryText">Paste the passage to summarize</label>
+        <textarea id="summaryText" rows="7" placeholder="Paste long content to summarize" required></textarea>
+        <div class="actions"><button type="submit">Summarize</button></div>
+      </form>
+      <div id="summaryResult" class="output" hidden></div>
+    </section>
+
+    <!-- Quiz -->
+    <section class="panel" id="quiz" role="tabpanel">
+      <form id="quizForm">
+        <label for="quizText">Enter a topic or paste a passage</label>
+        <textarea id="quizText" rows="4" placeholder="Pythagoras theorem" required></textarea>
+        <div class="actions"><button type="submit">Generate quiz</button></div>
+      </form>
+      <div id="quizResult" class="output" hidden></div>
+    </section>
+
+    <!-- Learning path -->
+    <section class="panel" id="path" role="tabpanel">
+      <form id="pathForm">
+        <label for="pathTopic">What do you want to learn?</label>
+        <div class="row">
+          <input type="text" id="pathTopic" placeholder="SQL" required>
+          <button type="submit">Get learning path</button>
+        </div>
+      </form>
+      <div id="pathResult" class="output" hidden></div>
+    </section>
+  </main>
+
+  <script>
+    // ---------- helpers ----------
+    const $ = (id) => document.getElementById(id);
+
+    function showLoading(box, text) {
+      box.hidden = false;
+      box.className = "output loading";
+      box.textContent = text || "Working on it...";
+    }
+    function showError(box, message) {
+      box.hidden = false;
+      box.className = "output error";
+      box.textContent = message;
+    }
+    function showResult(box, title, text) {
+      box.hidden = false;
+      box.className = "output";
+      box.replaceChildren();
+      const h = document.createElement("h2");
+      h.textContent = title;
+      box.appendChild(h);
+      if (text !== undefined) {
+        const p = document.createElement("div");
+        p.className = "text";
+        p.textContent = text;
+        box.appendChild(p);
+      }
+      return box;
+    }
+
+    async function callApi(url, options) {
+      let res;
+      try {
+        res = await fetch(url, options);
+      } catch (e) {
+        throw new Error("Cannot reach the EduGenie server. Is it still running?");
+      }
+      let data = {};
+      try { data = await res.json(); } catch (e) { /* non-JSON error body */ }
+      if (!res.ok) throw new Error(data.error || (data.detail ? JSON.stringify(data.detail) : "Request failed (" + res.status + ")"));
+      return data;
+    }
+
+    function postJson(url, body) {
+      return callApi(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+    }
+
+    // Tiny, safe markdown renderer (headings, bold, bullet lists) for the learning path.
+    function renderMarkdown(md, target) {
+      target.replaceChildren();
+      let list = null;
+      const addInline = (el, text) => {
+        text.split(/(\*\*[^*]+\*\*)/g).forEach((part) => {
+          if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+            const b = document.createElement("strong");
+            b.textContent = part.slice(2, -2);
+            el.appendChild(b);
+          } else if (part) {
+            el.appendChild(document.createTextNode(part.replace(/\*(?!\*)/g, "")));
+          }
+        });
+      };
+      md.split("\n").forEach((line) => {
+        const bullet = line.match(/^(\s*)[*\-+]\s+(.*)$/);
+        const heading = line.match(/^(#{1,4})\s+(.*)$/);
+        if (bullet) {
+          if (!list) { list = document.createElement("ul"); target.appendChild(list); }
+          const li = document.createElement("li");
+          li.style.marginLeft = Math.min(bullet[1].length, 12) * 4 + "px";
+          addInline(li, bullet[2]);
+          list.appendChild(li);
+          return;
+        }
+        list = null;
+        if (!line.trim()) return;
+        const el = document.createElement(heading ? "h3" : "p");
+        addInline(el, heading ? heading[2] : line);
+        target.appendChild(el);
+      });
+    }
+
+    // ---------- tabs ----------
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((t) => {
+          t.classList.toggle("active", t === tab);
+          t.setAttribute("aria-selected", t === tab ? "true" : "false");
+        });
+        document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === tab.dataset.target));
+      });
+    });
+
+    // Disable the submit button while a request runs.
+    function guard(form, handler) {
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = form.querySelector("button[type=submit]");
+        btn.disabled = true;
+        try { await handler(); } finally { btn.disabled = false; }
+      });
+    }
+
+    // ---------- Q&A (GET /qa) ----------
+    guard($("qaForm"), async () => {
+      const box = $("qaResult");
+      showLoading(box, "Thinking...");
+      try {
+        const data = await callApi("/qa?question=" + encodeURIComponent($("question").value.trim()));
+        showResult(box, "Answer", data.answer);
+      } catch (err) { showError(box, err.message); }
+    });
+
+    // ---------- Explanation (POST /explain) ----------
+    guard($("explainForm"), async () => {
+      const box = $("explainResult");
+      showLoading(box, "Preparing an explanation (the first run loads the model)...");
+      try {
+        const data = await postJson("/explain", { topic: $("topic").value.trim() });
+        showResult(box, "Explanation", data.explanation);
+      } catch (err) { showError(box, err.message); }
+    });
+
+    // ---------- Summary (POST /summarize) ----------
+    guard($("summaryForm"), async () => {
+      const box = $("summaryResult");
+      showLoading(box, "Summarizing...");
+      try {
+        const data = await postJson("/summarize", { text: $("summaryText").value.trim() });
+        showResult(box, "Summary", data.summary);
+      } catch (err) { showError(box, err.message); }
+    });
+
+    // ---------- Quiz (POST /quiz) ----------
+    guard($("quizForm"), async () => {
+      const box = $("quizResult");
+      showLoading(box, "Writing your quiz...");
+      try {
+        const data = await postJson("/quiz", { text: $("quizText").value.trim() });
+        renderQuiz(box, data.quiz);
+      } catch (err) { showError(box, err.message); }
+    });
+
+    function renderQuiz(box, quiz) {
+      showResult(box, "Quiz");
+      quiz.forEach((q, i) => {
+        const block = document.createElement("div");
+        block.className = "question";
+
+        const title = document.createElement("p");
+        title.className = "q-title";
+        const num = document.createElement("strong");
+        num.textContent = "Q" + (i + 1) + ": ";
+        title.appendChild(num);
+        title.appendChild(document.createTextNode(q.question));
+        block.appendChild(title);
+
+        q.options.forEach((opt) => {
+          const label = document.createElement("label");
+          label.className = "option";
+          const radio = document.createElement("input");
+          radio.type = "radio";
+          radio.name = "q" + i;
+          radio.value = opt;
+          label.appendChild(radio);
+          label.appendChild(document.createTextNode(" " + opt));
+          block.appendChild(label);
+        });
+
+        const check = document.createElement("button");
+        check.type = "button";
+        check.textContent = "Check answer";
+        const feedback = document.createElement("p");
+        feedback.className = "feedback";
+        feedback.setAttribute("role", "status");
+
+        check.addEventListener("click", () => {
+          const chosen = block.querySelector("input[type=radio]:checked");
+          if (!chosen) {
+            feedback.className = "feedback warn";
+            feedback.textContent = "Choose an option first.";
+            return;
+          }
+          if (chosen.value === q.answer) {
+            feedback.className = "feedback ok";
+            feedback.textContent = "Correct!";
+          } else {
+            feedback.className = "feedback bad";
+            feedback.textContent = "Incorrect. Correct answer: " + q.answer;
+          }
+        });
+
+        block.appendChild(check);
+        block.appendChild(feedback);
+        box.appendChild(block);
+      });
+    }
+
+    // ---------- Learning path (GET /learn/recommendations) ----------
+    guard($("pathForm"), async () => {
+      const box = $("pathResult");
+      showLoading(box, "Building your learning path...");
+      try {
+        const topic = $("pathTopic").value.trim();
+        const data = await callApi("/learn/recommendations?topic=" + encodeURIComponent(topic));
+        showResult(box, 'Learning path for "' + data.topic + '"');
+        const body = document.createElement("div");
+        body.className = "markdown";
+        renderMarkdown(data.recommendation, body);
+        box.appendChild(body);
+      } catch (err) { showError(box, err.message); }
+    });
+  </script>
+</body>
+</html>
